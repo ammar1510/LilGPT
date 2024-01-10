@@ -44,6 +44,6 @@ python train.py num_epochs
 
 
 ## References
--[MinGPT By Andrej Karpathy](https://github.com/karpathy/minGPT/tree/master)- One of the simplest implementation of a GPT model.
--[Genius API](https://docs.genius.com)- Free to use API to get songs by various artists on the open sourced platform.
--[Kaggle](https://www.kaggle.com/) provides free GPUs, which was extremely helpful in training the model.
+- [MinGPT By Andrej Karpathy](https://github.com/karpathy/minGPT/tree/master)- One of the simplest implementation of a GPT model.
+- [Genius API](https://docs.genius.com)- Free to use API to get songs by various artists on the open sourced platform.
+- [Kaggle](https://www.kaggle.com/) provides free GPUs, which was extremely helpful in training the model.
