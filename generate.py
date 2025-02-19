@@ -1,33 +1,52 @@
-import numpy as np
-import torch 
 import sys
-from torch import nn
+import torch
+import hydra
+from omegaconf import DictConfig
+import hydra.utils
 from model import GPT
-from train import encoder,decoder
+from tokenizer import tokenizer  # Import tokenizer
 
-batch_size = 64
-context_len = 256
-in_dim = 384
-num_heads = 6
-n_layers = 6
-device = "mps" if torch.backends.mps.is_available() else "cpu"
-vocab_size=78
+@hydra.main(config_path="cfg", config_name="config", version_base=None)
+def main(cfg: DictConfig):
+    # The current working directory might have changed; get the original one.
+    orig_dir = hydra.utils.get_original_cwd()
+    device = cfg.train.device
 
-model = GPT(vocab_len=vocab_size,context_len=context_len,n_layers=n_layers,in_dim=in_dim,n_heads=num_heads,device=device)
-weights = torch.load('model_weights.pth',map_location=device)
-model.load_state_dict(weights)
+    # Create the model using the factory method.
+    model = GPT.create(
+        cfg.model.vocab_size,
+        cfg.train.context_len,
+        cfg.model.n_layers,
+        cfg.model.in_dim,
+        cfg.model.num_heads,
+        cfg.model.dropout,
+        compile_model=cfg.model.compile_model,
+    )
+    model.to(device)
 
-model.to(device)
+    # Load the model weights.
+    weights_path = hydra.utils.to_absolute_path(cfg.generate.weights_path)
+    weights = torch.load(weights_path, map_location=device)
+    model.load_state_dict(weights)
 
-input = encoder(" ")
-input = torch.unsqueeze(torch.tensor(input,device=device),dim=0)
-num_tokens = 500
+    # Preprocess the input text once (if needed) and then encode it.
+    tokenizer.preprocess(cfg.train.train_file)  # Only if needed to build vocab beforehand.
+    input_tokens = tokenizer.encode(cfg.generate.input_text)
+    input_tensor = torch.tensor(input_tokens, device=device).unsqueeze(0)
 
-if len(sys.argv)>1:
-    num_tokens=sys.argv[1]
+    # Optionally override the number of tokens to generate via command-line.
+    num_tokens = cfg.generate.num_tokens
+    if len(sys.argv) > 1:
+        try:
+            num_tokens = int(sys.argv[1])
+        except ValueError:
+            pass
 
+    generated = model.generate(input_tensor, num_tokens)
+    print(tokenizer.decode(generated[0].tolist()))
 
-print(decoder(model.generate(input,num_tokens)[0].tolist()))
+if __name__ == "__main__":
+    main()
 
 
 

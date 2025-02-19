@@ -1,140 +1,107 @@
-import numpy as np
+import os
 import re
-import torch
 import gc
-import sys  
-from torch import autograd
-from torch import nn
-from torch.utils.data import Dataset,DataLoader
+import hydra
+from omegaconf import DictConfig
+import torch
+import numpy as np
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 from model import GPT
+import hydra.utils
+from tokenizer import tokenizer
 
+def preprocess_corpus(corpus: str) -> str:
+    return tokenizer.preprocess(corpus)
 
-"""hyperparameters:"""
-batch_size = 64
-context_len = 256
-num_epochs = 5
-val_step = max(1,num_epochs/10)
-lr = 4e-4
-in_dim = 384
-num_heads = 6
-n_layers = 6
-device = "mps" if torch.backends.mps.is_available() else "cpu"
-vocab_size=70
-train = False
-
-decoder,encoder = None,None
-
-if len(sys.argv)>1:
-    num_epochs=sys.argv[1]
-
-
-
-with open("drake.txt","r",encoding="UTF-8") as file:
-    corpus = file.read()
-
-
-def preprocess(corpus):
-    cleaned_text = re.sub(r'[^a-zA-Z0-9&.[\]()!{}:"\'/\\,]', ' ', corpus)
-    vocab = list(sorted(set(cleaned_text)))
-    idx = list(range(len(vocab)))
-    encode = {k:v for k,v in zip(vocab,idx)}
-    decode = {k:v for v,k in encode.items()}
-    global encoder,decoder
-    encoder = lambda word: [encode[w] for w in word]
-    decoder = lambda input: ''.join([decode[x] for x in input])
-
-
-    global vocab_size
-    vocab_size =len(decode)
-
-    return cleaned_text
-
-corpus = preprocess(corpus)
-
-
-
-        
-class dataset(Dataset):
-    def __init__(self,corpus,context_len):
+class TextDataset(Dataset):
+    def __init__(self, corpus: str, context_len: int) -> None:
         super().__init__()
-
-        self.input = encoder(corpus)
-        self.input = torch.tensor(self.input)
-        self.size = len(corpus)-context_len
-
+        self.data = torch.tensor(tokenizer.encode(corpus), dtype=torch.long)
         self.context_len = context_len
-        self.idx = list(range(self.size))
+        self.size = len(self.data) - context_len
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.size
-    
-    def __getitem__(self,index):
-        
-        x = self.input[index:index+self.context_len]
-        y = self.input[index+1:index+self.context_len+1]
-        return x,y
-        
-    
-def dataloader(corpus,batch_size,context_len,shuffle=True,cv=0.1,num_workers=0):
-    tr_dataset = dataset(corpus,context_len=context_len)
-    cv_dataset = dataset(corpus,context_len=context_len)
 
-    idx = list(range(len(tr_dataset)))
-    
+    def __getitem__(self, index: int):
+        x = self.data[index : index + self.context_len]
+        y = self.data[index + 1 : index + self.context_len + 1]
+        return x, y
+
+def get_dataloader(corpus: str, batch_size: int, context_len: int, cv_ratio: float, num_workers: int, shuffle: bool = True):
+    dataset_obj = TextDataset(corpus, context_len)
+    indices = list(range(len(dataset_obj)))
     if shuffle:
-        np.random.shuffle(idx)
+        np.random.shuffle(indices)
+    split = int(len(indices) * cv_ratio)
+    train_indices = indices[:split]
+    val_indices = indices[split:]
+    train_sampler = SubsetRandomSampler(train_indices)
+    val_sampler = SubsetRandomSampler(val_indices)
+    train_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=train_sampler, num_workers=num_workers)
+    val_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=val_sampler, num_workers=num_workers)
+    return train_loader, val_loader
 
-    n = int(len(idx)*cv)   
+@hydra.main(config_path="cfg", config_name="config", version_base=None)
+def main(cfg: DictConfig):
+    orig_dir = hydra.utils.get_original_cwd()
+    train_file_path = os.path.join(orig_dir, cfg.train.train_file)
     
-    tr_idx = idx[:n]
-    cv_idx = idx[n:]
-    # print(tr_idx)
-    tr_sampler = SubsetRandomSampler(tr_idx)
-    cv_sampler = SubsetRandomSampler(cv_idx)
-
-    tr_loader = DataLoader(tr_dataset,batch_size=batch_size,num_workers=num_workers,sampler=tr_sampler)
-    cv_loader = DataLoader(cv_dataset,batch_size=batch_size,num_workers=num_workers,sampler=cv_sampler)
-
-    return tr_loader,cv_loader
-
-
-
-if __name__ == "__main__":
-
+    with open(train_file_path, "r", encoding="UTF-8") as f:
+        corpus = f.read()
+    corpus = preprocess_corpus(corpus)
     
-    train,val = dataloader(corpus,batch_size,context_len,num_workers=4)
-    print(vocab_size)
-
-    model = GPT(vocab_size,context_len,n_layers,in_dim,num_heads,device=device)
-    model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(),lr=lr)
-    for epoch in range(num_epochs):
-        
-        for i,(x,y) in enumerate(train):
-            x,y = x.to(device),y.to(device)
-            logits,loss = model(x,y)
+    train_loader, val_loader = get_dataloader(
+        corpus,
+        batch_size=cfg.train.batch_size,
+        context_len=cfg.train.context_len,
+        cv_ratio=cfg.train.cv_ratio,
+        num_workers=cfg.train.num_workers
+    )
+    
+    print("Vocab size:", tokenizer.vocab_size)
+    model = GPT.create(
+        tokenizer.vocab_size,
+        cfg.train.context_len,
+        cfg.model.n_layers,
+        cfg.model.in_dim,
+        cfg.model.num_heads,
+        cfg.model.dropout,
+        compile_model=cfg.model.compile_model
+    )
+    model.to(cfg.train.device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr)
+    print("training model on device:", cfg.train.device)
+    
+    for epoch in range(cfg.train.num_epochs):
+        model.train()
+        for i, (x, y) in enumerate(train_loader):
+            x, y = x.to(cfg.train.device), y.to(cfg.train.device)
+            logits, loss = model(x, y)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             
-            del x,y,logits
+            del x, y, logits
             torch.cuda.empty_cache()
             gc.collect()
-
-        print(f"train set loss:{loss}")        
-        if epoch%val_step==val_step-1:
-
+            
+        print(f"Epoch {epoch+1}/{cfg.train.num_epochs} - Train Loss: {loss.item():.4f}")
+        
+        if (epoch + 1) % max(1, cfg.train.num_epochs // 10) == 0:
+            model.eval()
+            net_loss, cnt = 0.0, 0
             with torch.no_grad():
-                net_loss,cnt = 0,0
+                for x, y in val_loader:
+                    x, y = x.to(cfg.train.device), y.to(cfg.train.device)
+                    _, loss = model(x, y)
+                    net_loss += loss.item()
+                    cnt += 1
+            print(f"Epoch {epoch+1}/{cfg.train.num_epochs} - Val Loss: {(net_loss/cnt):.4f}")
 
-                for (x,y) in val:
-                    x,y=x.to(device),y.to(device)
-                    _,loss = model(x,y)
-                    net_loss+=loss
-                    cnt+=1
-    
-            print(f"val set loss:{net_loss/cnt}")
+if __name__ == "__main__":
+    main()
 
 
 
