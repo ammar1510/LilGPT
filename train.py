@@ -11,6 +11,8 @@ from model import GPT
 import hydra.utils
 from tokenizer import tokenizer
 
+torch.set_float32_matmul_precision('high')
+
 def preprocess_corpus(corpus: str) -> str:
     return tokenizer.preprocess(corpus)
 
