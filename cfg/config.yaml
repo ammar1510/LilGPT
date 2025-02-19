@@ -6,7 +6,8 @@ train:
   train_file: "data/lyrics.txt"
   cv_ratio: 0.1
   num_workers: 4
-  device: "mps"
+  device: "cuda"
+  log_interval: 100
 
 model:
   vocab_size: 37

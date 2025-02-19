@@ -76,6 +76,9 @@ def main(cfg: DictConfig):
     
     for epoch in range(cfg.train.num_epochs):
         model.train()
+        running_loss = 0.0
+        num_batches = 0
+        
         for i, (x, y) in enumerate(train_loader):
             x, y = x.to(cfg.train.device), y.to(cfg.train.device)
             logits, loss = model(x, y)
@@ -83,22 +86,41 @@ def main(cfg: DictConfig):
             loss.backward()
             optimizer.step()
             
+            running_loss += loss.item()
+            num_batches += 1
+            
+            # Log training loss every log_interval batches.
+            if (i + 1) % cfg.train.log_interval == 0:
+                avg_loss = running_loss / num_batches
+                print(f"Epoch {epoch+1}, Batch {i+1}: Train Loss: {avg_loss:.4f}")
+                running_loss = 0.0
+                num_batches = 0
+            
             del x, y, logits
             torch.cuda.empty_cache()
             gc.collect()
-            
-        print(f"Epoch {epoch+1}/{cfg.train.num_epochs} - Train Loss: {loss.item():.4f}")
         
-        if (epoch + 1) % max(1, cfg.train.num_epochs // 10) == 0:
-            model.eval()
-            net_loss, cnt = 0.0, 0
-            with torch.no_grad():
-                for x, y in val_loader:
-                    x, y = x.to(cfg.train.device), y.to(cfg.train.device)
-                    _, loss = model(x, y)
-                    net_loss += loss.item()
-                    cnt += 1
-            print(f"Epoch {epoch+1}/{cfg.train.num_epochs} - Val Loss: {(net_loss/cnt):.4f}")
+        print(f"Epoch {epoch+1} completed.")
+        
+        # Run validation after each epoch.
+        model.eval()
+        net_loss = 0.0
+        cnt = 0
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(cfg.train.device), y.to(cfg.train.device)
+                _, loss = model(x, y)
+                net_loss += loss.item()
+                cnt += 1
+        avg_val_loss = net_loss / cnt if cnt > 0 else float('inf')
+        print(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
+        
+        # Save the model checkpoint after each epoch.
+        checkpoint_dir = os.path.join(orig_dir, "checkpoints")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch{epoch+1}.pth")
+        torch.save(model.state_dict(), checkpoint_path)
+        print(f"Saved model checkpoint to {checkpoint_path}")
 
 if __name__ == "__main__":
     main()
