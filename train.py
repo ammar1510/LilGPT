@@ -29,7 +29,7 @@ class TextDataset(Dataset):
         y = self.data[index + 1 : index + self.context_len + 1]
         return x, y
 
-def get_dataloader(corpus: str, batch_size: int, context_len: int, cv_ratio: float, num_workers: int, shuffle: bool = True):
+def get_dataloader(corpus: str, batch_size: int, context_len: int, cv_ratio: float, num_workers: int, device: str, shuffle: bool = True):
     dataset_obj = TextDataset(corpus, context_len)
     indices = list(range(len(dataset_obj)))
     if shuffle:
@@ -39,8 +39,14 @@ def get_dataloader(corpus: str, batch_size: int, context_len: int, cv_ratio: flo
     val_indices = indices[split:]
     train_sampler = SubsetRandomSampler(train_indices)
     val_sampler = SubsetRandomSampler(val_indices)
-    train_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=train_sampler, num_workers=num_workers)
-    val_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=val_sampler, num_workers=num_workers)
+    
+    # Enable pin_memory if using CUDA
+    pin_memory = True if "cuda" in device.lower() else False
+    
+    train_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=train_sampler,
+                              num_workers=num_workers, pin_memory=pin_memory)
+    val_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=val_sampler,
+                            num_workers=num_workers, pin_memory=pin_memory)
     return train_loader, val_loader
 
 @hydra.main(config_path="cfg", config_name="config", version_base=None)
@@ -57,7 +63,8 @@ def main(cfg: DictConfig):
         batch_size=cfg.train.batch_size,
         context_len=cfg.train.context_len,
         cv_ratio=cfg.train.cv_ratio,
-        num_workers=cfg.train.num_workers
+        num_workers=cfg.train.num_workers,
+        device=cfg.train.device
     )
     
     print("Vocab size:", tokenizer.vocab_size)
@@ -80,7 +87,7 @@ def main(cfg: DictConfig):
         num_batches = 0
         
         for i, (x, y) in enumerate(train_loader):
-            x, y = x.to(cfg.train.device), y.to(cfg.train.device)
+            x, y = x.to(cfg.train.device, non_blocking=True), y.to(cfg.train.device, non_blocking=True)
             logits, loss = model(x, y)
             optimizer.zero_grad()
             loss.backward()
@@ -108,7 +115,7 @@ def main(cfg: DictConfig):
         cnt = 0
         with torch.no_grad():
             for x, y in val_loader:
-                x, y = x.to(cfg.train.device), y.to(cfg.train.device)
+                x, y = x.to(cfg.train.device, non_blocking=True), y.to(cfg.train.device, non_blocking=True)
                 _, loss = model(x, y)
                 net_loss += loss.item()
                 cnt += 1

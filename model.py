@@ -36,7 +36,7 @@ class MultiHeadAttention(nn.Module):
         # Compute attention using the built-in function with causal masking
         attn_out = F.scaled_dot_product_attention(q, k, v, dropout_p=self.dropout.p, is_causal=True)
         # Merge attention head outputs: (B, n_heads, T, head_dim) -> (B, T, in_dim)
-        attn_out = attn_out.transpose(1, 2).reshape(B, T, -1)
+        attn_out = attn_out.transpose(1, 2).reshape(B, T, -1).contiguous()
         return self.out_proj(attn_out)
 
 
