@@ -1,0 +1,22 @@
+train:
+  batch_size: 256
+  context_len: 256
+  num_epochs: 5
+  lr: 0.0004
+  train_file: "data/lyrics.txt"
+  cv_ratio: 0.1
+  num_workers: 4
+  device: "mps"
+
+model:
+  vocab_size: 37
+  in_dim: 384
+  num_heads: 6
+  n_layers: 6
+  dropout: 0.2
+  compile_model: true
+
+generate:
+  num_tokens: 500
+  input_text: " "  
+  weights_path: "checkpoints/model_weights.pth"
