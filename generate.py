@@ -4,7 +4,17 @@ import hydra
 from omegaconf import DictConfig
 import hydra.utils
 from model import GPT
-from tokenizer import tokenizer  # Import tokenizer
+from tokenizer import tokenizer
+import logging
+
+# Configure logging to include a timestamp
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+logger = logging.getLogger(__name__)
 
 @hydra.main(config_path="cfg", config_name="config", version_base=None)
 def main(cfg: DictConfig):
@@ -43,7 +53,7 @@ def main(cfg: DictConfig):
             pass
 
     generated = model.generate(input_tensor, num_tokens)
-    print(tokenizer.decode(generated[0].tolist()))
+    logger.info(tokenizer.decode(generated[0].tolist()))
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,15 @@
 import re
 from typing import List, Callable
+import logging
+
+# Configure logging to include a timestamp
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+logger = logging.getLogger(__name__)
 
 class Tokenizer:
     """
@@ -55,4 +65,4 @@ if __name__ == "__main__":
     with open(data_path, "r", encoding="UTF-8") as f:
         corpus = f.read()
     vocab_size = tokenizer.get_vocab_size(corpus)
-    print(f"Size of vocabulary for {data_path}: {vocab_size}")
+    logger.info(f"Size of vocabulary for {data_path}: {vocab_size}")

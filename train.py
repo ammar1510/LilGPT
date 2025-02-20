@@ -5,11 +5,22 @@ import hydra
 from omegaconf import DictConfig
 import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, RandomSampler
 from torch.utils.data.sampler import SubsetRandomSampler
 from model import GPT
 import hydra.utils
 from tokenizer import tokenizer
+import logging
+from tqdm import tqdm  # progress bar
+
+# Configure logging to include a timestamp
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+logger = logging.getLogger(__name__)
 
 torch.set_float32_matmul_precision('high')
 
@@ -17,39 +28,17 @@ def preprocess_corpus(corpus: str) -> str:
     return tokenizer.preprocess(corpus)
 
 class TextDataset(Dataset):
-    def __init__(self, corpus: str, context_len: int) -> None:
-        super().__init__()
-        self.data = torch.tensor(tokenizer.encode(corpus), dtype=torch.long)
-        self.context_len = context_len
-        self.size = len(self.data) - context_len
+    def __init__(self, text, block_size):
+        self.data = tokenizer.encode(text)
+        self.block_size = block_size
 
-    def __len__(self) -> int:
-        return self.size
+    def __len__(self):
+        return len(self.data) - self.block_size
 
-    def __getitem__(self, index: int):
-        x = self.data[index : index + self.context_len]
-        y = self.data[index + 1 : index + self.context_len + 1]
-        return x, y
-
-def get_dataloader(corpus: str, batch_size: int, context_len: int, cv_ratio: float, num_workers: int, device: str, shuffle: bool = True):
-    dataset_obj = TextDataset(corpus, context_len)
-    indices = list(range(len(dataset_obj)))
-    if shuffle:
-        np.random.shuffle(indices)
-    split = int(len(indices) * cv_ratio)
-    train_indices = indices[:split]
-    val_indices = indices[split:]
-    train_sampler = SubsetRandomSampler(train_indices)
-    val_sampler = SubsetRandomSampler(val_indices)
-    
-    # Enable pin_memory if using CUDA
-    pin_memory = True if "cuda" in device.lower() else False
-    
-    train_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=train_sampler,
-                              num_workers=num_workers, pin_memory=pin_memory)
-    val_loader = DataLoader(dataset_obj, batch_size=batch_size, sampler=val_sampler,
-                            num_workers=num_workers, pin_memory=pin_memory)
-    return train_loader, val_loader
+    def __getitem__(self, idx):
+        x = self.data[idx: idx + self.block_size]
+        y = self.data[idx + 1: idx + 1 + self.block_size]
+        return torch.tensor(x, dtype=torch.long), torch.tensor(y, dtype=torch.long)
 
 @hydra.main(config_path="cfg", config_name="config", version_base=None)
 def main(cfg: DictConfig):
@@ -60,16 +49,7 @@ def main(cfg: DictConfig):
         corpus = f.read()
     corpus = preprocess_corpus(corpus)
     
-    train_loader, val_loader = get_dataloader(
-        corpus,
-        batch_size=cfg.train.batch_size,
-        context_len=cfg.train.context_len,
-        cv_ratio=cfg.train.cv_ratio,
-        num_workers=cfg.train.num_workers,
-        device=cfg.train.device
-    )
-    
-    print("Vocab size:", tokenizer.vocab_size)
+    logger.info(f"Vocab size: {tokenizer.vocab_size}")
     model = GPT.create(
         tokenizer.vocab_size,
         cfg.train.context_len,
@@ -81,55 +61,132 @@ def main(cfg: DictConfig):
     )
     model.to(cfg.train.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr)
-    print("training model on device:", cfg.train.device)
     
-    for epoch in range(cfg.train.num_epochs):
-        model.train()
-        running_loss = 0.0
-        num_batches = 0
-        
-        for i, (x, y) in enumerate(train_loader):
-            x, y = x.to(cfg.train.device, non_blocking=True), y.to(cfg.train.device, non_blocking=True)
-            logits, loss = model(x, y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+    # Initialize the learning rate scheduler using StepLR.
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer, 
+        step_size=cfg.train.step_size, 
+        gamma=cfg.train.scheduler_gamma
+    )
+    
+    logger.info(f"Training model on device: {cfg.train.device}")
+
+    dataset = TextDataset(corpus, cfg.train.context_len)
+
+    val_size = int(cfg.train.cv_ratio * len(dataset))
+    train_size = len(dataset) - val_size
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+
+    num_train_samples = cfg.train.num_train_samples
+    if num_train_samples > len(train_dataset):
+        logger.warning("Requested train samples exceed dataset size. Using replacement=True.")
+        train_sampler = RandomSampler(
+            train_dataset,
+            replacement=True,
+            num_samples=num_train_samples
+        )
+    else:
+        train_sampler = RandomSampler(
+            train_dataset,
+            replacement=False,
+            num_samples=num_train_samples
+        )
+
+    num_val_samples = cfg.val.num_val_samples
+    if num_val_samples > len(val_dataset):
+        logger.warning("Requested validation samples exceed dataset size. Using replacement=True.")
+        val_sampler = RandomSampler(
+            val_dataset,
+            replacement=True,
+            num_samples=num_val_samples
+        )
+    else:
+        val_sampler = RandomSampler(
+            val_dataset,
+            replacement=False,
+            num_samples=num_val_samples
+        )
+
+    pin_mem = True if "cuda" in cfg.train.device.lower() else False
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=cfg.train.batch_size,
+        sampler=train_sampler,
+        num_workers=cfg.train.num_workers,
+        pin_memory=pin_mem
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.val.batch_size,
+        sampler=val_sampler,
+        num_workers=cfg.val.num_workers,
+        pin_memory=pin_mem
+    )
+
+    last_completed_epoch = 0
+
+    try:
+        for epoch in range(cfg.train.num_epochs):
+            model.train()
+            running_loss = 0.0
+            num_batches = 0
             
-            running_loss += loss.item()
-            num_batches += 1
-            
-            # Log training loss every log_interval batches.
-            if (i + 1) % cfg.train.log_interval == 0:
-                avg_loss = running_loss / num_batches
-                print(f"Epoch {epoch+1}, Batch {i+1}: Train Loss: {avg_loss:.4f}")
-                running_loss = 0.0
-                num_batches = 0
-            
-            del x, y, logits
-            torch.cuda.empty_cache()
-            gc.collect()
-        
-        print(f"Epoch {epoch+1} completed.")
-        
-        # Run validation after each epoch.
-        model.eval()
-        net_loss = 0.0
-        cnt = 0
-        with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(cfg.train.device, non_blocking=True), y.to(cfg.train.device, non_blocking=True)
-                _, loss = model(x, y)
-                net_loss += loss.item()
-                cnt += 1
-        avg_val_loss = net_loss / cnt if cnt > 0 else float('inf')
-        print(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
-        
-        # Save the model checkpoint after each epoch.
+            for i, (x, y) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1} Training")):
+                x = x.to(cfg.train.device, non_blocking=True)
+                y = y.to(cfg.train.device, non_blocking=True)
+                logger.info(f"x.shape: {x.shape}, y.shape: {y.shape}")
+                
+                logits, loss = model(x, y)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item()
+                num_batches += 1
+                
+                if (i + 1) % cfg.train.log_interval == 0:
+                    avg_loss = running_loss / num_batches
+                    logger.info(f"Epoch {epoch+1}, Batch {i+1}: Train Loss: {avg_loss:.4f}")
+                    running_loss = 0.0
+                    num_batches = 0
+
+            logger.info(f"Epoch {epoch+1} training completed.")
+
+            model.eval()
+            net_loss = 0.0
+            cnt = 0
+            with torch.no_grad():
+                for x, y in tqdm(val_loader, desc=f"Epoch {epoch+1} Validation"):
+                    x = x.to(cfg.train.device, non_blocking=True)
+                    y = y.to(cfg.train.device, non_blocking=True)
+                    _, loss = model(x, y)
+                    net_loss += loss.item()
+                    cnt += 1
+            avg_val_loss = net_loss / cnt if cnt > 0 else float('inf')
+            logger.info(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
+
+            # Step the scheduler once per epoch.
+            scheduler.step()
+            current_lr = scheduler.get_last_lr()[0]  # Get current LR from scheduler.
+            logger.info(f"Epoch {epoch+1} - Learning rate: {current_lr:.6f}")
+
+            checkpoint_dir = os.path.join(orig_dir, cfg.generate.weights_dir)
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch{epoch+1}.pth")
+            torch.save(model.state_dict(), checkpoint_path)
+            logger.info(f"Saved model checkpoint to {checkpoint_path}")
+
+            last_completed_epoch = epoch + 1
+
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt caught at epoch {}. Saving checkpoint before exiting.".format(last_completed_epoch))
         checkpoint_dir = os.path.join(orig_dir, "checkpoints")
         os.makedirs(checkpoint_dir, exist_ok=True)
-        checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch{epoch+1}.pth")
-        torch.save(model.state_dict(), checkpoint_path)
-        print(f"Saved model checkpoint to {checkpoint_path}")
+        interrupt_checkpoint_path = os.path.join(checkpoint_dir, f"model_interrupt_epoch{last_completed_epoch}.pth")
+        torch.save(model.state_dict(), interrupt_checkpoint_path)
+        logger.info(f"Saved interrupt checkpoint to {interrupt_checkpoint_path}")
+        return
 
 if __name__ == "__main__":
     main()
