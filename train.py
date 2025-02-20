@@ -77,48 +77,55 @@ def main(cfg: DictConfig):
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
-    num_train_samples = cfg.train.num_train_samples
-    if num_train_samples > len(train_dataset):
-        logger.warning("Requested train samples exceed dataset size. Using replacement=True.")
+    batch_size = cfg.train.batch_size
+    num_train_batches = cfg.train.num_train_samples 
+    total_train_samples = num_train_batches * batch_size
+
+    num_val_samples = cfg.train.num_val_samples
+    total_val_samples = num_val_samples * batch_size
+
+
+    if total_train_samples > len(train_dataset):
+        logger.warning("Requested training samples exceed dataset size. Using replacement=True.")
         train_sampler = RandomSampler(
             train_dataset,
             replacement=True,
-            num_samples=num_train_samples
+            num_samples=total_train_samples
         )
     else:
         train_sampler = RandomSampler(
             train_dataset,
             replacement=False,
-            num_samples=num_train_samples
+            num_samples=total_train_samples
         )
 
-    num_val_samples = cfg.train.num_val_samples
-    if num_val_samples > len(val_dataset):
+    if total_val_samples > len(val_dataset):
         logger.warning("Requested validation samples exceed dataset size. Using replacement=True.")
         val_sampler = RandomSampler(
             val_dataset,
             replacement=True,
-            num_samples=num_val_samples
+            num_samples=total_val_samples
         )
     else:
         val_sampler = RandomSampler(
             val_dataset,
             replacement=False,
-            num_samples=num_val_samples
+            num_samples=total_val_samples
         )
 
     pin_mem = True if "cuda" in cfg.train.device.lower() else False
 
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=cfg.train.batch_size,
+        batch_size=batch_size,
         sampler=train_sampler,
         num_workers=cfg.train.num_workers,
         pin_memory=pin_mem
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=cfg.train.batch_size,
+        batch_size=batch_size,
         sampler=val_sampler,
         num_workers=cfg.train.num_workers,
         pin_memory=pin_mem
@@ -135,7 +142,7 @@ def main(cfg: DictConfig):
             for i, (x, y) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1} Training")):
                 x = x.to(cfg.train.device, non_blocking=True)
                 y = y.to(cfg.train.device, non_blocking=True)
-                logger.info(f"x.shape: {x.shape}, y.shape: {y.shape}")
+                logger.info(f"iter {i}: x.shape: {x.shape}, y.shape: {y.shape}")
                 
                 logits, loss = model(x, y)
                 optimizer.zero_grad()
@@ -190,13 +197,3 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-    
-
-

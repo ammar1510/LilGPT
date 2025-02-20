@@ -1,3 +1,4 @@
 #ignore all .pkl files
 *.pkl
 test_dataloader.py
+outputs/*
