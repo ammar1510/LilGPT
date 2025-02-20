@@ -92,7 +92,7 @@ def main(cfg: DictConfig):
             num_samples=num_train_samples
         )
 
-    num_val_samples = cfg.val.num_val_samples
+    num_val_samples = cfg.train.num_val_samples
     if num_val_samples > len(val_dataset):
         logger.warning("Requested validation samples exceed dataset size. Using replacement=True.")
         val_sampler = RandomSampler(
@@ -118,9 +118,9 @@ def main(cfg: DictConfig):
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=cfg.val.batch_size,
+        batch_size=cfg.train.batch_size,
         sampler=val_sampler,
-        num_workers=cfg.val.num_workers,
+        num_workers=cfg.train.num_workers,
         pin_memory=pin_mem
     )
 
