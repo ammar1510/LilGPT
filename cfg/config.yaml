@@ -11,7 +11,7 @@ train:
   num_train_samples: 100
   num_val_samples: 10
   step_size: 10         # Reduce LR every 10 epochs.
-  scheduler_gamma: 0.1  # Multiply LR by this factor every step.
+  scheduler_gamma: 0.8  # Multiply LR by this factor every step.
 model:
   vocab_size: 37
   in_dim: 1024
