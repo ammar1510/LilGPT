@@ -1,5 +1,5 @@
 train:
-  batch_size: 1024
+  batch_size: 512
   context_len: 1024
   num_epochs: 5
   lr: 0.0004
@@ -16,7 +16,7 @@ model:
   vocab_size: 37
   in_dim: 1024
   num_heads: 8
-  n_layers: 8
+  n_layers: 6
   dropout: 0.2
   compile_model: true
 
