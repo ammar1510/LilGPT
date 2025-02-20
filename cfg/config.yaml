@@ -14,7 +14,7 @@ train:
   scheduler_gamma: 0.5
 model:
   vocab_size: 37
-  in_dim: 1024
+  in_dim: 256
   num_heads: 8
   n_layers: 6
   dropout: 0.2
