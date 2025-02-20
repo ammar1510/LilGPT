@@ -11,9 +11,8 @@ from model import GPT
 import hydra.utils
 from tokenizer import tokenizer
 import logging
-from tqdm import tqdm  # progress bar
+from tqdm import tqdm
 
-# Configure logging to include a timestamp
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -49,9 +48,9 @@ def main(cfg: DictConfig):
         corpus = f.read()
     corpus = preprocess_corpus(corpus)
     
-    logger.info(f"Vocab size: {tokenizer.vocab_size}")
+    logger.info(f"Vocab size: {cfg.model.vocab_size}")
     model = GPT.create(
-        tokenizer.vocab_size,
+        cfg.model.vocab_size,
         cfg.train.context_len,
         cfg.model.n_layers,
         cfg.model.in_dim,
@@ -62,7 +61,6 @@ def main(cfg: DictConfig):
     model.to(cfg.train.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr)
     
-    # Initialize the learning rate scheduler using StepLR.
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, 
         step_size=cfg.train.step_size, 
@@ -142,8 +140,6 @@ def main(cfg: DictConfig):
             for i, (x, y) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1} Training")):
                 x = x.to(cfg.train.device, non_blocking=True)
                 y = y.to(cfg.train.device, non_blocking=True)
-                logger.info(f"iter {i}: x.shape: {x.shape}, y.shape: {y.shape}")
-                
                 logits, loss = model(x, y)
                 optimizer.zero_grad()
                 loss.backward()
@@ -173,9 +169,8 @@ def main(cfg: DictConfig):
             avg_val_loss = net_loss / cnt if cnt > 0 else float('inf')
             logger.info(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
 
-            # Step the scheduler once per epoch.
             scheduler.step()
-            current_lr = scheduler.get_last_lr()[0]  # Get current LR from scheduler.
+            current_lr = scheduler.get_last_lr()[0]  
             logger.info(f"Epoch {epoch+1} - Learning rate: {current_lr:.6f}")
 
             checkpoint_dir = os.path.join(orig_dir, cfg.generate.weights_dir)
