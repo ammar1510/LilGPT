@@ -1,17 +1,21 @@
 train:
-  batch_size: 256
-  context_len: 256
-  num_epochs: 5
+  batch_size: 400
+  context_len: 1024
+  num_epochs: 40
   lr: 0.0004
   train_file: "data/lyrics.txt"
   cv_ratio: 0.1
-  num_workers: 4
-  device: "mps"
-
+  num_workers: 6
+  device: "cuda"
+  log_interval: 10
+  num_train_samples: 100
+  num_val_samples: 10
+  step_size: 10
+  scheduler_gamma: 0.5
 model:
   vocab_size: 37
-  in_dim: 384
-  num_heads: 6
+  in_dim: 256
+  num_heads: 8
   n_layers: 6
   dropout: 0.2
   compile_model: true
@@ -19,4 +23,4 @@ model:
 generate:
   num_tokens: 500
   input_text: " "  
-  weights_path: "checkpoints/model_weights.pth"
+  weights_dir: "checkpoints"
